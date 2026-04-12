@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "298971633490",
+    "project_id": "gen-lang-client-0002206491",
+    "storage_bucket": "gen-lang-client-0002206491.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:298971633490:android:ad9e2a7562001e1cf74c8b",
+        "android_client_info": {
+          "package_name": "com.example.meeting_brain"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDxV4icjuLGuHSIUoBsCWmY4L1gRugVR2A"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,9 @@
+default_platform(:android)
+
+platform :android do
+  desc "Build release bundle"
+  lane :build_release do
+    sh("flutter pub get")
+    sh("flutter build appbundle --release")
+  end
+end
