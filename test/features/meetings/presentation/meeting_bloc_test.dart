@@ -55,7 +55,7 @@ void main() {
     when(() => recordingService.stop()).thenAnswer((_) async => null);
     when(() => recordingService.startRecording()).thenAnswer((_) async {});
     
-    when(() => streamService.connect(any(), meetingId: any(named: 'meetingId'), accessToken: any(named: 'accessToken'), initialRawParticipants: any(named: 'initialRawParticipants')))
+    when(() => streamService.connect(any(), meetingId: any(named: 'meetingId'), initialRawParticipants: any(named: 'initialRawParticipants')))
         .thenAnswer((_) async {});
     when(() => streamService.disconnect(any())).thenAnswer((_) async {});
     when(() => streamService.transcriptStream).thenAnswer((_) => const Stream<String>.empty());
@@ -67,6 +67,8 @@ void main() {
     when(() => meetingsRemoteDataSource.uploadRecording(any(), any())).thenAnswer((_) async => {});
     
     when(() => meetingsRepository.getIceServers()).thenAnswer((_) async => []);
+    when(() => meetingsRepository.joinMeeting(any())).thenAnswer((_) async => {});
+
     when(() => webRtcService.initialize(
       userId: any(named: 'userId'),
       meetingId: any(named: 'meetingId'),
@@ -74,6 +76,8 @@ void main() {
     )).thenAnswer((_) async {});
     when(() => webRtcService.dispose()).thenAnswer((_) async {});
     when(() => webRtcService.setMicEnabled(any())).thenReturn(null);
+    when(() => webRtcService.audioLevelsStream).thenAnswer((_) => const Stream<Map<String, double>>.empty());
+    when(() => webRtcService.hasActiveConnection(any())).thenReturn(false);
   });
 
   group('MeetingBloc', () {
