@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:meeting_brain/l10n/app_localizations.dart';
@@ -11,9 +9,12 @@ import '../../domain/entities/meeting_entity.dart';
 import '../../domain/repositories/meetings_repository.dart';
 import 'package:meeting_brain/features/auth/data/datasources/auth_remote_data_source.dart';
 import 'package:meeting_brain/features/auth/data/models/user_model.dart';
+import 'package:meeting_brain/features/auth/data/datasources/auth_local_data_source.dart';
 
 class MeetingsPage extends StatefulWidget {
-  const MeetingsPage({super.key});
+  final MeetingsRemoteDataSource remoteDataSource;
+
+  const MeetingsPage({super.key, required this.remoteDataSource});
 
   @override
   State<MeetingsPage> createState() => _MeetingsPageState();
@@ -24,6 +25,7 @@ class _MeetingsPageState extends State<MeetingsPage> {
   final MeetingsRemoteDataSource _remote = sl<MeetingsRemoteDataSource>();
   final ScrollController _scrollController = ScrollController();
   final List<MeetingEntity> _meetings = <MeetingEntity>[];
+
   int _page = 1;
   bool _hasMore = true;
   bool _isLoading = false;
@@ -32,6 +34,7 @@ class _MeetingsPageState extends State<MeetingsPage> {
   void initState() {
     super.initState();
     _loadPage();
+
     _scrollController.addListener(() {
       if (_scrollController.position.pixels >=
               _scrollController.position.maxScrollExtent - 200 &&
@@ -42,70 +45,74 @@ class _MeetingsPageState extends State<MeetingsPage> {
     });
   }
 
+
   Future<void> _loadPage() async {
     setState(() => _isLoading = true);
     final result = await _repository.getMeetings(page: _page, limit: 10);
+    final authDataSource = sl<AuthLocalDataSource>();
+    final currentIdentifiers = authDataSource.extractUserIdentifiersFromToken(
+      authDataSource.getAccessToken(),
+    );
+    final filteredItems = result.items.where((meeting) {
+      return currentIdentifiers.contains(meeting.creatorId.trim().toLowerCase()) ||
+          currentIdentifiers.contains(meeting.creatorName.trim().toLowerCase());
+    }).toList();
     if (!mounted) return;
     setState(() {
-      _meetings.addAll(result.items);
+      _meetings.addAll(filteredItems);
       _hasMore = result.hasMore;
       _isLoading = false;
-      if (result.items.isNotEmpty) {
+      if (filteredItems.isNotEmpty) {
         _page += 1;
       }
     });
   }
 
-  Future<void> _startAndOpenMeeting(BuildContext context, String meetingId) async {
+  Future<void> _startAndOpenMeeting(
+    BuildContext context,
+    String meetingId,
+    bool canUpload,
+  ) async {
     final messenger = ScaffoldMessenger.of(context);
     final router = GoRouter.of(context);
 
     try {
-      final response = await _remote.startMeeting(meetingId);
-      final canUpload = _isCurrentUserCreator(response);
+      if (canUpload) {
+        await _remote.startMeeting(meetingId);
+      } else {
+        await _remote.joinMeeting(meetingId);
+      }
       if (!mounted) return;
-      router.push('/meetings/live/$meetingId?canUpload=$canUpload');
+      router.push('/meetings/live/$meetingId?canUpload=$canUpload&joined=${!canUpload}');
     } catch (e) {
       if (!mounted) return;
       messenger.showSnackBar(
         SnackBar(
-          content: Text('Failed to start meeting: $e'),
+          content: Text('Failed to enter meeting: $e'),
           duration: const Duration(seconds: 5),
         ),
       );
     }
   }
 
-  bool _isCurrentUserCreator(Map<String, dynamic> response) {
-    final meeting = response['meeting'];
-    if (meeting is! Map<String, dynamic>) return false;
-
-    final creatorId = meeting['creatorId']?.toString();
-    final token = sl<AuthLocalDataSource>().getAccessToken();
-    final currentUserId = _extractUserIdFromToken(token);
-
-    if (creatorId == null || creatorId.isEmpty || currentUserId == null || currentUserId.isEmpty) {
-      return false;
-    }
-
-    return creatorId == currentUserId;
-  }
-
-  String? _extractUserIdFromToken(String? token) {
-    if (token == null || token.isEmpty) return null;
-    final parts = token.split('.');
-    if (parts.length < 2) return null;
-
+  Future<void> _deleteMeeting(String meetingId) async {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     try {
-      final normalized = base64Url.normalize(parts[1]);
-      final payload = jsonDecode(utf8.decode(base64Url.decode(normalized)));
-      if (payload is! Map<String, dynamic>) return null;
-
-      return payload['sub']?.toString() ??
-          payload['nameid']?.toString() ??
-          payload['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier']?.toString();
-    } catch (_) {
-      return null;
+      await _repository.deleteMeeting(meetingId);
+      scaffoldMessenger.showSnackBar(
+        const SnackBar(content: Text('Meeting deleted successfully')),
+      );
+      // Refresh the list
+      setState(() {
+        _meetings.clear();
+        _page = 1;
+        _hasMore = true;
+      });
+      _loadPage();
+    } catch (e) {
+      scaffoldMessenger.showSnackBar(
+        SnackBar(content: Text('Failed to delete meeting: $e')),
+      );
     }
   }
 
@@ -136,14 +143,19 @@ class _MeetingsPageState extends State<MeetingsPage> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     decoration: BoxDecoration(
-                      border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.3)),
+                      border: Border.all(
+                        color: theme.colorScheme.primary.withValues(alpha: 0.3),
+                      ),
                       borderRadius: BorderRadius.circular(16),
                       color: theme.colorScheme.primary.withValues(alpha: 0.05),
                     ),
                     child: Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.add_circle_outline_rounded, color: theme.colorScheme.primary),
+                        Icon(
+                          Icons.add_circle_outline_rounded,
+                          color: theme.colorScheme.primary,
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           'Schedule New Meeting',
@@ -162,7 +174,8 @@ class _MeetingsPageState extends State<MeetingsPage> {
                   controller: _scrollController,
                   padding: const EdgeInsets.fromLTRB(20, 0, 20, 100),
                   itemCount: _meetings.length + (_hasMore ? 1 : 0),
-                  separatorBuilder: (context, index) => const SizedBox(height: 16),
+                  separatorBuilder: (context, index) =>
+                      const SizedBox(height: 16),
                   itemBuilder: (context, index) {
                     if (index >= _meetings.length) {
                       return const Padding(
@@ -187,10 +200,30 @@ class _MeetingsPageState extends State<MeetingsPage> {
                         color: Colors.transparent,
                         child: InkWell(
                           borderRadius: BorderRadius.circular(24),
-                          onTap: () => _startAndOpenMeeting(
-                            context,
-                            meeting.id.isEmpty ? 'm_$index' : meeting.id,
-                          ),
+                          onTap: () {
+                            if (meeting.status.toLowerCase() == 'ended') {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'This meeting has already ended and cannot be joined.',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+                            final authDataSource = sl<AuthLocalDataSource>();
+                            final currentIdentifiers = authDataSource.extractUserIdentifiersFromToken(
+                              authDataSource.getAccessToken(),
+                            );
+                            bool canUpload = currentIdentifiers.contains(meeting.creatorId.trim().toLowerCase()) ||
+                                             currentIdentifiers.contains(meeting.creatorName.trim().toLowerCase());
+                                             
+                            _startAndOpenMeeting(
+                              context,
+                              meeting.id.isEmpty ? 'm_$index' : meeting.id,
+                              canUpload,
+                            );
+                          },
                           child: Padding(
                             padding: const EdgeInsets.all(20),
                             child: Row(
@@ -199,7 +232,9 @@ class _MeetingsPageState extends State<MeetingsPage> {
                                   height: 56,
                                   width: 56,
                                   decoration: BoxDecoration(
-                                    color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                                    color: theme.colorScheme.primary.withValues(
+                                      alpha: 0.1,
+                                    ),
                                     borderRadius: BorderRadius.circular(16),
                                   ),
                                   child: Icon(
@@ -211,14 +246,20 @@ class _MeetingsPageState extends State<MeetingsPage> {
                                 const SizedBox(width: 16),
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Text(
-                                        meeting.title.isEmpty ? '${l10n.meeting} ${index + 1}' : meeting.title,
-                                        style: theme.textTheme.titleMedium?.copyWith(
-                                          fontWeight: FontWeight.bold,
+                                        Text(
+                                          meeting.title.isEmpty
+                                              ? '${l10n.meeting} ${index + 1}'
+                                              : meeting.title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.textTheme.titleMedium
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.bold,
+                                              ),
                                         ),
-                                      ),
                                       const SizedBox(height: 4),
                                       Row(
                                         children: [
@@ -228,10 +269,18 @@ class _MeetingsPageState extends State<MeetingsPage> {
                                             color: theme.colorScheme.secondary,
                                           ),
                                           const SizedBox(width: 4),
-                                          Text(
-                                            l10n.aiSummaryPending,
-                                            style: theme.textTheme.bodySmall?.copyWith(
-                                              color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
+                                          Flexible(
+                                            child: Text(
+                                              l10n.aiSummaryPending,
+                                              maxLines: 1,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: theme.textTheme.bodySmall
+                                                  ?.copyWith(
+                                                    color: theme
+                                                        .colorScheme
+                                                        .onSurface
+                                                        .withValues(alpha: 0.5),
+                                                  ),
                                             ),
                                           ),
                                         ],
@@ -239,11 +288,40 @@ class _MeetingsPageState extends State<MeetingsPage> {
                                     ],
                                   ),
                                 ),
-                                Icon(
-                                  Icons.arrow_forward_ios_rounded,
-                                  size: 16,
-                                  color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
-                                ),
+                                if (meeting.status.toLowerCase() == 'ended')
+                                  PopupMenuButton<String>(
+                                    icon: Icon(
+                                      Icons.more_vert,
+                                      color: theme.colorScheme.onSurface.withValues(
+                                        alpha: 0.5,
+                                      ),
+                                    ),
+                                    onSelected: (value) {
+                                      if (value == 'delete') {
+                                        _deleteMeeting(meeting.id);
+                                      }
+                                    },
+                                    itemBuilder: (context) => [
+                                      const PopupMenuItem(
+                                        value: 'delete',
+                                        child: Row(
+                                          children: [
+                                            Icon(Icons.delete_outline, color: Colors.red),
+                                            SizedBox(width: 8),
+                                            Text('Delete', style: TextStyle(color: Colors.red)),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  )
+                                else
+                                  Icon(
+                                    Icons.arrow_forward_ios_rounded,
+                                    size: 16,
+                                    color: theme.colorScheme.onSurface.withValues(
+                                      alpha: 0.3,
+                                    ),
+                                  ),
                               ],
                             ),
                           ),
@@ -264,7 +342,10 @@ class _MeetingsPageState extends State<MeetingsPage> {
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(20),
                 gradient: LinearGradient(
-                  colors: [theme.colorScheme.primary, theme.colorScheme.secondary],
+                  colors: [
+                    theme.colorScheme.primary,
+                    theme.colorScheme.secondary,
+                  ],
                 ),
                 boxShadow: [
                   BoxShadow(
@@ -279,7 +360,9 @@ class _MeetingsPageState extends State<MeetingsPage> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.transparent,
                   shadowColor: Colors.transparent,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(20),
+                  ),
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -315,15 +398,18 @@ class _MeetingsPageState extends State<MeetingsPage> {
     StateSetter? dialogSetter;
 
     // Fetch users immediately
-    sl<AuthRemoteDataSource>().fetchUsers().then((users) {
-      availableUsers = users;
-      isLoadingUsers = false;
-      if (dialogSetter != null) dialogSetter!(() {});
-    }).catchError((e) {
-      isLoadingUsers = false;
-      fetchError = 'Could not load users';
-      if (dialogSetter != null) dialogSetter!(() {});
-    });
+    sl<AuthRemoteDataSource>()
+        .fetchUsers()
+        .then((users) {
+          availableUsers = users;
+          isLoadingUsers = false;
+          if (dialogSetter != null) dialogSetter!(() {});
+        })
+        .catchError((e) {
+          isLoadingUsers = false;
+          fetchError = 'Could not load users';
+          if (dialogSetter != null) dialogSetter!(() {});
+        });
 
     showDialog(
       context: context,
@@ -338,7 +424,9 @@ class _MeetingsPageState extends State<MeetingsPage> {
 
             return AlertDialog(
               title: const Text('Start New Meeting'),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -358,18 +446,26 @@ class _MeetingsPageState extends State<MeetingsPage> {
                             final date = await showDatePicker(
                               context: dialogContext,
                               initialDate: selectedDate,
-                              firstDate: DateTime.now().subtract(const Duration(minutes: 5)),
-                              lastDate: DateTime.now().add(const Duration(days: 365)),
+                              firstDate: DateTime.now().subtract(
+                                const Duration(minutes: 5),
+                              ),
+                              lastDate: DateTime.now().add(
+                                const Duration(days: 365),
+                              ),
                             );
                             if (date != null && dialogContext.mounted) {
                               // Also pick time
                               final time = await showTimePicker(
                                 context: dialogContext,
-                                initialTime: TimeOfDay.fromDateTime(selectedDate),
+                                initialTime: TimeOfDay.fromDateTime(
+                                  selectedDate,
+                                ),
                               );
                               setDialogState(() {
                                 selectedDate = DateTime(
-                                  date.year, date.month, date.day,
+                                  date.year,
+                                  date.month,
+                                  date.day,
                                   time?.hour ?? selectedDate.hour,
                                   time?.minute ?? selectedDate.minute,
                                 );
@@ -393,10 +489,16 @@ class _MeetingsPageState extends State<MeetingsPage> {
                     children: [
                       Text(
                         'Select Participants',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                       if (isLoadingUsers)
-                        const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+                        const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
                     ],
                   ),
                   const SizedBox(height: 12),
@@ -406,15 +508,30 @@ class _MeetingsPageState extends State<MeetingsPage> {
                     child: isLoadingUsers
                         ? const Center(child: CircularProgressIndicator())
                         : fetchError != null
-                            ? Center(child: Text(fetchError!, style: const TextStyle(fontSize: 12, color: Colors.red)))
-                            : availableUsers.isEmpty
-                                ? const Center(child: Text('No users found', style: TextStyle(fontSize: 12)))
-                                : ListView.builder(
+                        ? Center(
+                            child: Text(
+                              fetchError!,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.red,
+                              ),
+                            ),
+                          )
+                        : availableUsers.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'No users found',
+                              style: TextStyle(fontSize: 12),
+                            ),
+                          )
+                        : ListView.builder(
                             scrollDirection: Axis.horizontal,
                             itemCount: availableUsers.length,
                             itemBuilder: (context, index) {
                               final user = availableUsers[index];
-                              final isSelected = selectedUserIds.contains(user.id);
+                              final isSelected = selectedUserIds.contains(
+                                user.id,
+                              );
                               return Padding(
                                 padding: const EdgeInsets.only(right: 12),
                                 child: Column(
@@ -434,11 +551,23 @@ class _MeetingsPageState extends State<MeetingsPage> {
                                           CircleAvatar(
                                             radius: 28,
                                             backgroundColor: isSelected
-                                                ? Theme.of(context).colorScheme.primary
-                                                : Colors.grey.withValues(alpha: 0.2),
-                                            backgroundImage: user.avatarUrl != null ? NetworkImage(user.avatarUrl!) : null,
+                                                ? Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary
+                                                : Colors.grey.withValues(
+                                                    alpha: 0.2,
+                                                  ),
+                                            backgroundImage:
+                                                user.avatarUrl != null
+                                                ? NetworkImage(user.avatarUrl!)
+                                                : null,
                                             child: user.avatarUrl == null
-                                                ? Text(user.displayName.isNotEmpty ? user.displayName[0].toUpperCase() : '?')
+                                                ? Text(
+                                                    user.displayName.isNotEmpty
+                                                        ? user.displayName[0]
+                                                              .toUpperCase()
+                                                        : '?',
+                                                  )
                                                 : null,
                                           ),
                                           if (isSelected)
@@ -446,13 +575,24 @@ class _MeetingsPageState extends State<MeetingsPage> {
                                               right: 0,
                                               bottom: 0,
                                               child: Container(
-                                                padding: const EdgeInsets.all(2),
-                                                decoration: BoxDecoration(
-                                                  color: Theme.of(context).colorScheme.primary,
-                                                  shape: BoxShape.circle,
-                                                  border: Border.all(color: Colors.white, width: 2),
+                                                padding: const EdgeInsets.all(
+                                                  2,
                                                 ),
-                                                child: const Icon(Icons.check, size: 12, color: Colors.white),
+                                                decoration: BoxDecoration(
+                                                  color: Theme.of(
+                                                    context,
+                                                  ).colorScheme.primary,
+                                                  shape: BoxShape.circle,
+                                                  border: Border.all(
+                                                    color: Colors.white,
+                                                    width: 2,
+                                                  ),
+                                                ),
+                                                child: const Icon(
+                                                  Icons.check,
+                                                  size: 12,
+                                                  color: Colors.white,
+                                                ),
                                               ),
                                             ),
                                         ],
@@ -478,7 +618,9 @@ class _MeetingsPageState extends State<MeetingsPage> {
               ),
               actions: [
                 TextButton(
-                  onPressed: isCreating ? null : () => Navigator.pop(dialogContext),
+                  onPressed: isCreating
+                      ? null
+                      : () => Navigator.pop(dialogContext),
                   child: const Text('Cancel'),
                 ),
                 ElevatedButton(
@@ -487,7 +629,9 @@ class _MeetingsPageState extends State<MeetingsPage> {
                       : () async {
                           if (titleCtrl.text.trim().isEmpty) {
                             ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Please enter a meeting title')),
+                              const SnackBar(
+                                content: Text('Please enter a meeting title'),
+                              ),
                             );
                             return;
                           }
@@ -502,9 +646,12 @@ class _MeetingsPageState extends State<MeetingsPage> {
                               participantIds: selectedUserIds,
                             );
                             // Safely extract meeting ID — server may use 'id' or 'meetingId'
-                            final rawId = response['id'] ?? response['meetingId'];
+                            final rawId =
+                                response['id'] ?? response['meetingId'];
                             if (rawId == null || rawId.toString().isEmpty) {
-                              throw Exception('Server returned no meeting ID. Response: $response');
+                              throw Exception(
+                                'Server returned no meeting ID. Response: $response',
+                              );
                             }
                             final meetingId = rawId.toString();
                             if (dialogContext.mounted) {
@@ -517,15 +664,20 @@ class _MeetingsPageState extends State<MeetingsPage> {
                               _hasMore = true;
                             });
                             _loadPage();
-                            final startResponse = await _remote.startMeeting(meetingId);
-                            final canUpload = _isCurrentUserCreator(startResponse);
+                            await _remote.startMeeting(meetingId);
                             if (!mounted) return;
-                            router.push('/meetings/live/$meetingId?canUpload=$canUpload');
+                            router.push(
+                              '/meetings/live/$meetingId?canUpload=true',
+                            );
                           } catch (e, stackTrace) {
-                            print('=============== MEETING CREATION EXCEPTION ===============');
+                            print(
+                              '=============== MEETING CREATION EXCEPTION ===============',
+                            );
                             print(e.toString());
                             print(stackTrace.toString());
-                            print('==========================================================');
+                            print(
+                              '==========================================================',
+                            );
                             setDialogState(() => isCreating = false);
                             messenger.showSnackBar(
                               SnackBar(
@@ -536,7 +688,9 @@ class _MeetingsPageState extends State<MeetingsPage> {
                           }
                         },
                   style: ElevatedButton.styleFrom(
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                   ),
                   child: isCreating
                       ? const SizedBox(

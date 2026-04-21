@@ -54,16 +54,36 @@ class _NotificationsPageState extends State<NotificationsPage> {
                   itemBuilder: (context, index) {
                     final item = _notifications[index];
                     final title = item['title'] ?? 'Notification';
+                    final message = item['message'] ?? '';
                     final type = item['type'] ?? '';
                     final id = item['id'] ?? '';
-                    final isMeeting = type == 'MeetingStarted';
+                    final meetingId = item['meetingId'] ??
+                        item['entityId'] ??
+                        item['referenceId'] ??
+                        item['relatedEntityId'] ??
+                        '';
+                    final isMeeting = type == 'MeetingStarted' || type == 'MeetingInvited' || meetingId.toString().isNotEmpty;
                     
+                    DateTime? createdAt;
+                    if (item['createdAt'] != null) {
+                      try {
+                        createdAt = DateTime.parse(item['createdAt'].toString());
+                      } catch (_) {}
+                    }
+
                     return _NotificationCard(
-                      text: title,
+                      title: title,
+                      message: message,
+                      date: createdAt,
                       isMeeting: isMeeting,
                       onTap: () {
                          _remoteDataSource.markAsRead(id);
-                         context.push('/notifications/details/$id${isMeeting ? "?isMeeting=true" : ""}');
+                         final meetingQuery = isMeeting && meetingId.toString().isNotEmpty && meetingId != 'null'
+                             ? '&meetingId=${Uri.encodeComponent(meetingId.toString())}'
+                             : '';
+                         context.push(
+                           '/notifications/details/$id${isMeeting ? "?isMeeting=true$meetingQuery" : ""}',
+                         );
                       },
                     );
                   },
@@ -73,10 +93,23 @@ class _NotificationsPageState extends State<NotificationsPage> {
 }
 
 class _NotificationCard extends StatelessWidget {
-  const _NotificationCard({required this.text, this.isMeeting = false, this.onTap});
-  final String text;
+  const _NotificationCard({
+    required this.title,
+    required this.message,
+    this.date,
+    this.isMeeting = false,
+    this.onTap,
+  });
+  
+  final String title;
+  final String message;
+  final DateTime? date;
   final bool isMeeting;
   final VoidCallback? onTap;
+
+  String _formatDate(DateTime d) {
+    return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')} ${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -97,9 +130,9 @@ class _NotificationCard extends StatelessWidget {
           ],
         ),
         child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
           leading: Container(
-            padding: const EdgeInsets.all(8),
+            padding: const EdgeInsets.all(10),
             decoration: BoxDecoration(
               color: (isMeeting ? theme.colorScheme.primary : theme.colorScheme.secondary).withOpacity(0.1),
               shape: BoxShape.circle,
@@ -107,12 +140,34 @@ class _NotificationCard extends StatelessWidget {
             child: Icon(
               isMeeting ? Icons.video_call_rounded : Icons.notifications_active_outlined,
               color: isMeeting ? theme.colorScheme.primary : theme.colorScheme.secondary,
-              size: 20,
+              size: 24,
             ),
           ),
           title: Text(
-            text,
-            style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.w500),
+            title,
+            style: theme.textTheme.bodyLarge?.copyWith(fontWeight: FontWeight.bold),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const SizedBox(height: 4),
+              if (message.isNotEmpty)
+                Text(
+                  message,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.8),
+                  ),
+                ),
+              if (date != null) ...[
+                const SizedBox(height: 6),
+                Text(
+                  _formatDate(date!),
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: theme.colorScheme.onSurface.withOpacity(0.5),
+                  ),
+                ),
+              ],
+            ],
           ),
           trailing: Icon(Icons.chevron_right_rounded, color: theme.colorScheme.onSurface.withOpacity(0.2)),
         ),

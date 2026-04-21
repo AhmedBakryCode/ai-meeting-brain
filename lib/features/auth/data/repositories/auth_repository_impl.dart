@@ -8,8 +8,8 @@ class AuthRepositoryImpl implements AuthRepository {
   AuthRepositoryImpl({
     required AuthRemoteDataSource remoteDataSource,
     required AuthLocalDataSource localDataSource,
-  })  : _remoteDataSource = remoteDataSource,
-        _localDataSource = localDataSource;
+  }) : _remoteDataSource = remoteDataSource,
+       _localDataSource = localDataSource;
 
   final AuthRemoteDataSource _remoteDataSource;
   final AuthLocalDataSource _localDataSource;
@@ -22,15 +22,49 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
-  Future<AuthResponseModel> register({required String name, required String email, required String password}) async {
-    return _remoteDataSource.register(name: name, email: email, password: password);
+  Future<AuthResponseModel> register({
+    required String name,
+    required String email,
+    required String password,
+  }) async {
+    return _remoteDataSource.register(
+      name: name,
+      email: email,
+      password: password,
+    );
   }
 
   @override
-  Future<AuthResponseModel> refresh(String accessToken, String refreshToken) async {
+  Future<AuthResponseModel> refresh(
+    String accessToken,
+    String refreshToken,
+  ) async {
     final response = await _remoteDataSource.refresh(accessToken, refreshToken);
     await _saveTokens(response);
     return response;
+  }
+
+  @override
+  Future<bool> refreshTokens() async {
+    final accessToken = _localDataSource.getAccessToken();
+    final refreshToken = _localDataSource.getRefreshToken();
+
+    // No stored session — user is not logged in, nothing to refresh
+    if (accessToken == null || accessToken.isEmpty ||
+        refreshToken == null || refreshToken.isEmpty) {
+      return false;
+    }
+
+    try {
+      final response = await _remoteDataSource.refresh(accessToken, refreshToken);
+      await _saveTokens(response);
+      print('✅ [Auth] Token refreshed successfully on startup.');
+      return true;
+    } catch (e) {
+      // Refresh failed (token expired, network error, etc.) — stay silent
+      print('⚠️ [Auth] Token refresh failed on startup: $e');
+      return false;
+    }
   }
 
   Future<void> _saveTokens(AuthResponseModel response) async {
@@ -39,6 +73,7 @@ class AuthRepositoryImpl implements AuthRepository {
       refreshToken: response.refreshToken,
       expiry: response.accessTokenExpiry.toIso8601String(),
     );
+    await _localDataSource.saveUser(response.user);
   }
 
   @override
@@ -57,7 +92,20 @@ class AuthRepositoryImpl implements AuthRepository {
   }
 
   @override
-  Future<void> changePassword(String currentPassword, String newPassword) async {
+  Future<void> changePassword(
+    String currentPassword,
+    String newPassword,
+  ) async {
     await _remoteDataSource.changePassword(currentPassword, newPassword);
+  }
+
+  @override
+  Future<void> logout() async {
+    try {
+      await _remoteDataSource.logout();
+    } finally {
+      await _localDataSource.clearTokens();
+      await _localDataSource.clearUser();
+    }
   }
 }

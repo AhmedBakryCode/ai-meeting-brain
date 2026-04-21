@@ -1,7 +1,9 @@
 import 'package:bloc/bloc.dart';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/widgets.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:timezone/data/latest.dart' as tz_data;
 
@@ -11,16 +13,19 @@ import 'core/notifications/notification_service.dart';
 import 'core/observer/app_bloc_observer.dart';
 import 'core/sync/sync_manager.dart';
 import 'features/auth/data/datasources/auth_local_data_source.dart';
+import 'features/auth/domain/repositories/auth_repository.dart';
 import 'features/meetings/domain/repositories/meetings_repository.dart';
+import 'firebase_options.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   var isFirebaseReady = false;
   try {
-    await Firebase.initializeApp();
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
     isFirebaseReady = true;
   } catch (e, stackTrace) {
-    // Keep app booting in environments where Firebase files are not configured yet.
     debugPrint('Firebase initialization skipped: $e');
     debugPrintStack(stackTrace: stackTrace);
   }
@@ -29,6 +34,10 @@ Future<void> main() async {
   tz_data.initializeTimeZones();
   Bloc.observer = AppBlocObserver();
   await configureDependencies();
+
+  // Silently refresh the stored token on every app launch
+  await sl<AuthRepository>().refreshTokens();
+
   if (isFirebaseReady) {
     final notificationService = sl<NotificationService>();
     await notificationService.initialize();
@@ -37,5 +46,6 @@ Future<void> main() async {
   sl<SyncManager>().start(
     onConnected: () => sl<MeetingsRepository>().syncPendingData(),
   );
+
   runApp(const MeetingBrainApp());
 }

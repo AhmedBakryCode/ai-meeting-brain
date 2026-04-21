@@ -45,6 +45,9 @@ class _ProfileView extends StatelessWidget {
               ..hideCurrentSnackBar()
               ..showSnackBar(const SnackBar(content: Text('Password updated successfully!'), backgroundColor: Colors.green));
           }
+          if (state is ProfileLoggedOut) {
+            context.go('/auth');
+          }
         },
         builder: (context, state) {
           if (state is ProfileLoading && state is! ProfileLoaded) {
@@ -157,11 +160,12 @@ class _ProfileView extends StatelessWidget {
                 ),
                 const SizedBox(height: 24),
                 
-                // Logout Button
                 SizedBox(
                   width: double.infinity,
                   child: OutlinedButton.icon(
-                    onPressed: () => context.go('/auth'),
+                    onPressed: () {
+                      _showLogoutConfirmation(context);
+                    },
                     icon: const Icon(Icons.logout_rounded),
                     label: const Text('Log Out'),
                     style: OutlinedButton.styleFrom(
@@ -268,6 +272,30 @@ class _ProfileView extends StatelessWidget {
           ),
         ],
       )
+    );
+  }
+
+  void _showLogoutConfirmation(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Confirm Logout'),
+        content: const Text('Are you sure you want to log out?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('CANCEL'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              context.read<ProfileBloc>().add(const LogoutEvent());
+              Navigator.pop(ctx);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+            child: const Text('LOGOUT'),
+          ),
+        ],
+      ),
     );
   }
 

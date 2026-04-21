@@ -1,24 +1,26 @@
-import 'dart:async';
 import 'dart:io';
-import 'package:record/record.dart';
+
 import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 
 abstract class AudioRecordingService {
   Future<bool> ensurePermission();
-  Future<void> startChunking({
-    required void Function(String filePath) onChunk30s,
-  });
+  Future<void> startRecording();
   Future<bool> isRecording();
-  Future<void> stop();
+  Future<bool> isMuted();
+  Future<void> setMuted(bool muted);
+
+  /// Stops the recording and returns the path to the recorded file.
+  /// Returns null if nothing was recorded or an error occurred.
+  Future<String?> stop();
 }
 
 class AudioRecordingServiceImpl implements AudioRecordingService {
   AudioRecordingServiceImpl();
 
   AudioRecorder? _recorder;
-  Timer? _chunkTimer;
-  void Function(String filePath)? _onChunk30s;
   String? _currentPath;
+  bool _isMuted = false;
 
   @override
   Future<bool> ensurePermission() {
@@ -27,66 +29,31 @@ class AudioRecordingServiceImpl implements AudioRecordingService {
   }
 
   @override
-  Future<void> startChunking({
-    required void Function(String filePath) onChunk30s,
-  }) async {
+  Future<void> startRecording() async {
     _recorder ??= AudioRecorder();
-    _chunkTimer?.cancel();
-    _onChunk30s = onChunk30s;
-    await _startNewRecord();
+    _isMuted = false;
 
-    _chunkTimer = Timer.periodic(const Duration(seconds: 30), (_) async {
-      if (_recorder == null) return;
-      
-      try {
-        if (await _recorder!.isRecording()) {
-          final oldPath = await _recorder!.stop();
-          if (oldPath != null && _onChunk30s != null) {
-            _onChunk30s!(oldPath);
-          }
-        }
-      } catch (e) {
-        print('Error stopping chunk: $e');
-      }
-      
-      // Increased delay to allow hardware release
-      await Future.delayed(const Duration(milliseconds: 350));
-      
-      if (_chunkTimer != null) {
-        await _startNewRecord();
-      }
-    });
-  }
+    final tempDir = await getTemporaryDirectory();
+    _currentPath =
+        '${tempDir.path}/meeting_${DateTime.now().millisecondsSinceEpoch}.m4a';
 
-  Future<void> _startNewRecord() async {
-    if (_recorder == null) return;
-    
-    int retries = 0;
-    while (retries < 3) {
-      try {
-        // Double check state
-        if (await _recorder!.isRecording()) {
-          await _recorder!.stop();
-          await Future.delayed(const Duration(milliseconds: 150));
-        }
-        
-        final tempDir = await getTemporaryDirectory();
-        _currentPath = '${tempDir.path}/chunk_${DateTime.now().millisecondsSinceEpoch}.m4a';
-        
-        await _recorder!.start(
-          const RecordConfig(encoder: AudioEncoder.aacLc, numChannels: 1, sampleRate: 44100),
-          path: _currentPath!,
-        );
-        return; // Success
-      } catch (e) {
-        print('Attempt ${retries + 1} to start recording failed: $e');
-        retries++;
-        // On failure, wait longer and try to reset the recorder instance
-        await _recorder!.dispose().catchError((_) {});
-        _recorder = AudioRecorder();
-        await Future.delayed(const Duration(milliseconds: 600));
-      }
-    }
+    await _recorder!.start(
+      const RecordConfig(
+        encoder: AudioEncoder.aacLc,
+        numChannels: 1,
+        sampleRate: 44100,
+        autoGain: true,
+        echoCancel: true,
+        noiseSuppress: true,
+        androidConfig: AndroidRecordConfig(
+          audioSource: AndroidAudioSource.voiceCommunication,
+          useLegacy: false,
+        ),
+      ),
+      path: _currentPath!,
+    );
+
+    print('🎙️ [Recording] Started full-meeting recording at: $_currentPath');
   }
 
   @override
@@ -96,25 +63,74 @@ class AudioRecordingServiceImpl implements AudioRecordingService {
   }
 
   @override
-  Future<void> stop() async {
-    _chunkTimer?.cancel();
-    _chunkTimer = null;
+  Future<bool> isMuted() async => _isMuted;
 
-    if (_recorder != null) {
-      try {
-        if (await _recorder!.isRecording()) {
-          final lastPath = await _recorder!.stop();
-          if (lastPath != null && _onChunk30s != null) {
-            _onChunk30s!(lastPath);
-          }
-        }
-      } catch (e) {
-        print('Error during final stop: $e');
+  @override
+  Future<void> setMuted(bool muted) async {
+    _recorder ??= AudioRecorder();
+    final currentlyRecording = await _recorder!.isRecording();
+    if (!currentlyRecording) {
+      _isMuted = muted;
+      return;
+    }
+
+    if (muted == _isMuted) return;
+
+    try {
+      if (muted) {
+        await _recorder!.pause();
+      } else {
+        await _recorder!.resume();
       }
-      
-      _onChunk30s = null;
+      _isMuted = muted;
+    } catch (e) {
+      print('Error toggling mute state: $e');
+      rethrow;
+    }
+  }
+
+  @override
+  Future<String?> stop() async {
+    if (_recorder == null) return null;
+
+    try {
+      final isRecordingNow = await _recorder!.isRecording();
+      final isPaused = await _recorder!.isPaused();
+
+      String? path;
+      if (isRecordingNow || isPaused) {
+        path = await _recorder!.stop();
+        print('🎙️ [Recording] Stopped. Reported path: $path');
+      }
+
+      _isMuted = false;
       await _recorder!.dispose();
       _recorder = null;
+      _currentPath = null;
+
+      if (path == null) return null;
+
+      // Android's MediaRecorder writes the file asynchronously after stop().
+      // Wait briefly for the OS to flush the file to disk before validating it.
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      final file = File(path);
+      final exists = await file.exists();
+      final size = exists ? await file.length() : 0;
+
+      if (!exists || size == 0) {
+        print('⚠️ [Recording] File missing or empty after stop — skipping upload. path=$path, exists=$exists, size=$size');
+        return null;
+      }
+
+      print('🎙️ [Recording] File ready: $path ($size bytes)');
+      return path;
+    } catch (e) {
+      print('Error stopping recording: $e');
+      await _recorder?.dispose();
+      _recorder = null;
+      _currentPath = null;
+      return null;
     }
   }
 }

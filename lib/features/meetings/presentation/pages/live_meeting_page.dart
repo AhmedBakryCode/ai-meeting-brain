@@ -1,20 +1,25 @@
 import 'dart:math' as math;
 
+import 'package:characters/characters.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../../core/di/injection_container.dart';
+import '../../../auth/data/models/user_model.dart';
+import '../../data/services/webrtc_service.dart';
 import '../bloc/meeting_bloc.dart';
 
 class LiveMeetingPage extends StatelessWidget {
   const LiveMeetingPage({
     required this.meetingId,
     this.canUploadRecording = true,
+    this.isJoinedParticipant = false,
     super.key,
   });
   final String meetingId;
   final bool canUploadRecording;
+  final bool isJoinedParticipant;
 
   @override
   Widget build(BuildContext context) {
@@ -22,16 +27,26 @@ class LiveMeetingPage extends StatelessWidget {
       create: (_) => MeetingBloc(
         recordingService: sl(),
         transcriptStreamService: sl(),
+        webRtcService: sl(),
+        meetingsRepository: sl(),
+        authLocalDataSource: sl(),
         canUploadRecording: canUploadRecording,
       )..add(JoinMeeting(meetingId)),
-      child: _LiveMeetingView(meetingId: meetingId),
+      child: _LiveMeetingView(
+        meetingId: meetingId,
+        isJoinedParticipant: isJoinedParticipant,
+      ),
     );
   }
 }
 
 class _LiveMeetingView extends StatefulWidget {
-  const _LiveMeetingView({required this.meetingId});
+  const _LiveMeetingView({
+    required this.meetingId,
+    required this.isJoinedParticipant,
+  });
   final String meetingId;
+  final bool isJoinedParticipant;
 
   @override
   State<_LiveMeetingView> createState() => _LiveMeetingViewState();
@@ -58,7 +73,11 @@ class _LiveMeetingViewState extends State<_LiveMeetingView> {
           ),
           ElevatedButton(
             onPressed: () {
-              context.read<MeetingBloc>().add(EndMeeting(widget.meetingId));
+              if (widget.isJoinedParticipant) {
+                context.read<MeetingBloc>().add(LeaveMeeting(widget.meetingId));
+              } else {
+                context.read<MeetingBloc>().add(EndMeeting(widget.meetingId));
+              }
               Navigator.pop(dialogContext, true);
             },
             style: ElevatedButton.styleFrom(
@@ -93,24 +112,33 @@ class _LiveMeetingViewState extends State<_LiveMeetingView> {
             listener: (context, state) {
               if (state is MeetingPermissionDenied) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Microphone permission denied.')),
+                  const SnackBar(
+                    content: Text('Microphone permission denied.'),
+                  ),
                 );
               }
               if (state is Completed) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Meeting ended successfully.')),
+                  SnackBar(
+                    content: Text(
+                      widget.isJoinedParticipant
+                          ? 'Left meeting successfully.'
+                          : 'Meeting ended successfully.',
+                    ),
+                  ),
                 );
                 GoRouter.of(context).go('/meetings');
               }
               if (state is MeetingFailure) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text(state.message)),
-                );
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(state.message)));
               }
             },
             builder: (context, state) {
               final isRecording = state.isMicEnabled;
-              final isConnected = state is! MeetingInitial && state is! MeetingFailure;
+              final isConnected =
+                  state is! MeetingInitial && state is! MeetingFailure;
               final isProcessing = state is Processing;
               final isCompleted = state is Completed;
               final participants = _buildParticipants(state);
@@ -142,12 +170,16 @@ class _LiveMeetingViewState extends State<_LiveMeetingView> {
                           padding: const EdgeInsets.symmetric(horizontal: 16),
                           child: GridView.builder(
                             padding: const EdgeInsets.only(bottom: 132),
-                            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                              crossAxisCount: MediaQuery.sizeOf(context).width > 900 ? 3 : 2,
-                              mainAxisSpacing: 14,
-                              crossAxisSpacing: 14,
-                              childAspectRatio: 0.68,
-                            ),
+                            gridDelegate:
+                                SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount:
+                                      MediaQuery.sizeOf(context).width > 900
+                                      ? 3
+                                      : 2,
+                                  mainAxisSpacing: 14,
+                                  crossAxisSpacing: 14,
+                                  childAspectRatio: 0.68,
+                                ),
                             itemCount: participants.length,
                             itemBuilder: (context, index) {
                               final participant = participants[index];
@@ -178,20 +210,36 @@ class _LiveMeetingViewState extends State<_LiveMeetingView> {
                     child: _MeetingControls(
                       speakerEnabled: _speakerEnabled,
                       micEnabled: isRecording,
-                      canToggleMic: isConnected && !isProcessing && !isCompleted,
+                      canToggleMic:
+                          isConnected && !isProcessing && !isCompleted,
                       onToggleSpeaker: () {
                         setState(() {
                           _speakerEnabled = !_speakerEnabled;
                         });
+                        // Actually control remote audio output
+                        sl<WebRtcService>().setSpeakerEnabled(_speakerEnabled);
                       },
                       onToggleMic: () {
                         if (isConnected) {
-                          context.read<MeetingBloc>().add(ToggleMicrophone(widget.meetingId));
+                          context.read<MeetingBloc>().add(
+                            ToggleMicrophone(widget.meetingId),
+                          );
                         }
                       },
                       onEndMeeting: () {
-                        context.read<MeetingBloc>().add(EndMeeting(widget.meetingId));
+                        if (widget.isJoinedParticipant) {
+                          context.read<MeetingBloc>().add(
+                            LeaveMeeting(widget.meetingId),
+                          );
+                        } else {
+                          context.read<MeetingBloc>().add(
+                            EndMeeting(widget.meetingId),
+                          );
+                        }
                       },
+                      endLabel: widget.isJoinedParticipant
+                          ? 'Leave meeting'
+                          : 'End meeting',
                     ),
                   ),
                 ],
@@ -204,44 +252,74 @@ class _LiveMeetingViewState extends State<_LiveMeetingView> {
   }
 
   List<_Participant> _buildParticipants(MeetingState state) {
-    final transcriptCount = state.transcripts.length;
-    final activeIndex = transcriptCount == 0 ? 0 : transcriptCount % 4;
-    final isRecording = state.isMicEnabled;
+    final participants = state.participants;
+    if (participants.isEmpty) {
+      return <_Participant>[
+        _Participant(
+          name: 'Waiting...',
+          role: 'No participants yet',
+          color: const Color(0xFF8B5CF6),
+          initials: 'WA',
+          isMicEnabled: state.isMicEnabled,
+          isActive: true,
+        ),
+      ];
+    }
 
-    return <_Participant>[
-      _Participant(
-        name: 'You',
-        role: isRecording ? 'Microphone on' : 'Ready to speak',
-        color: const Color(0xFF8B5CF6),
-        initials: 'YO',
-        isMicEnabled: isRecording,
-        isActive: activeIndex == 0 || isRecording,
-      ),
-      _Participant(
-        name: 'Mona Ali',
-        role: 'Product Manager',
-        color: const Color(0xFF14B8A6),
-        initials: 'MA',
-        isMicEnabled: true,
-        isActive: activeIndex == 1 && state.transcripts.isNotEmpty,
-      ),
-      _Participant(
-        name: 'Omar Samir',
-        role: 'UX Designer',
-        color: const Color(0xFFF59E0B),
-        initials: 'OS',
-        isMicEnabled: activeIndex == 2,
-        isActive: activeIndex == 2 && state.transcripts.isNotEmpty,
-      ),
-      _Participant(
-        name: 'Sara Nabil',
-        role: 'Engineer',
-        color: const Color(0xFF3B82F6),
-        initials: 'SN',
-        isMicEnabled: activeIndex == 3,
-        isActive: activeIndex == 3 && state.transcripts.isNotEmpty,
-      ),
+    final activeIndex = state.transcripts.isEmpty
+        ? 0
+        : state.transcripts.length % participants.length;
+    final palette = <Color>[
+      const Color(0xFF8B5CF6),
+      const Color(0xFF14B8A6),
+      const Color(0xFFF59E0B),
+      const Color(0xFF3B82F6),
+      const Color(0xFFEF4444),
+      const Color(0xFF10B981),
     ];
+
+    return participants.asMap().entries.map((entry) {
+      final index = entry.key;
+      final user = entry.value;
+
+      // Determine if this user is speaking based on real-time audio levels (from WebRTC stats)
+      // Level is typically 0.0 to 1.0. 0.02 is a reasonable threshold for 'active'.
+      final audioLevel = state.audioLevels[user.id] ?? 0.0;
+      final isSpeaking = audioLevel > 0.02;
+
+      return _participantFromUser(
+        user,
+        color: palette[index % palette.length],
+        isActive: isSpeaking,
+        isMicEnabled: index == 0 ? state.isMicEnabled : true, // Local mic status from state
+      );
+    }).toList();
+  }
+
+  _Participant _participantFromUser(
+    UserModel user, {
+    required Color color,
+    required bool isActive,
+    required bool isMicEnabled,
+  }) {
+    final cleanedName = user.displayName.trim().isEmpty
+        ? 'Unknown user'
+        : user.displayName.trim();
+    final initials = cleanedName
+        .split(RegExp(r'\s+'))
+        .where((part) => part.isNotEmpty)
+        .take(2)
+        .map((part) => part.characters.first.toUpperCase())
+        .join();
+
+    return _Participant(
+      name: cleanedName,
+      role: user.email,
+      color: color,
+      initials: initials.isEmpty ? 'US' : initials,
+      isMicEnabled: isMicEnabled,
+      isActive: isActive,
+    );
   }
 
   String _statusLabel(MeetingState state) {
@@ -318,7 +396,10 @@ class _MeetingHeader extends StatelessWidget {
               SizedBox(width: 8),
               Text(
                 'Gallery',
-                style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -356,7 +437,9 @@ class _ParticipantTile extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            participant.color.withValues(alpha: participant.isActive ? 0.35 : 0.18),
+            participant.color.withValues(
+              alpha: participant.isActive ? 0.35 : 0.18,
+            ),
             const Color(0xFF0F172A),
           ],
         ),
@@ -367,7 +450,9 @@ class _ParticipantTile extends StatelessWidget {
         ),
         boxShadow: [
           BoxShadow(
-            color: participant.color.withValues(alpha: participant.isActive ? 0.25 : 0.08),
+            color: participant.color.withValues(
+              alpha: participant.isActive ? 0.25 : 0.08,
+            ),
             blurRadius: 26,
             offset: const Offset(0, 16),
           ),
@@ -381,7 +466,10 @@ class _ParticipantTile extends StatelessWidget {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.black.withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(999),
@@ -390,7 +478,9 @@ class _ParticipantTile extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        participant.isMicEnabled ? Icons.mic_rounded : Icons.mic_off_rounded,
+                        participant.isMicEnabled
+                            ? Icons.mic_rounded
+                            : Icons.mic_off_rounded,
                         color: Colors.white,
                         size: 16,
                       ),
@@ -409,7 +499,9 @@ class _ParticipantTile extends StatelessWidget {
                 const Spacer(),
                 if (participant.isActive)
                   Icon(
-                    isSpeakerEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+                    isSpeakerEnabled
+                        ? Icons.volume_up_rounded
+                        : Icons.volume_off_rounded,
                     color: Colors.white70,
                     size: 20,
                   ),
@@ -474,7 +566,8 @@ class _AvatarWave extends StatefulWidget {
   State<_AvatarWave> createState() => _AvatarWaveState();
 }
 
-class _AvatarWaveState extends State<_AvatarWave> with SingleTickerProviderStateMixin {
+class _AvatarWaveState extends State<_AvatarWave>
+    with SingleTickerProviderStateMixin {
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1800),
@@ -577,10 +670,7 @@ class _WaveRing extends StatelessWidget {
 }
 
 class _TranscriptCaptionCard extends StatelessWidget {
-  const _TranscriptCaptionCard({
-    required this.speaker,
-    required this.text,
-  });
+  const _TranscriptCaptionCard({required this.speaker, required this.text});
 
   final String speaker;
   final String text;
@@ -630,6 +720,7 @@ class _MeetingControls extends StatelessWidget {
     required this.onToggleSpeaker,
     required this.onToggleMic,
     required this.onEndMeeting,
+    required this.endLabel,
   });
 
   final bool speakerEnabled;
@@ -638,6 +729,7 @@ class _MeetingControls extends StatelessWidget {
   final VoidCallback onToggleSpeaker;
   final VoidCallback onToggleMic;
   final VoidCallback onEndMeeting;
+  final String endLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -652,7 +744,9 @@ class _MeetingControls extends StatelessWidget {
         children: [
           Expanded(
             child: _ControlButton(
-              icon: speakerEnabled ? Icons.volume_up_rounded : Icons.volume_off_rounded,
+              icon: speakerEnabled
+                  ? Icons.volume_up_rounded
+                  : Icons.volume_off_rounded,
               label: speakerEnabled ? 'Speaker on' : 'Speaker off',
               onPressed: onToggleSpeaker,
             ),
@@ -670,7 +764,7 @@ class _MeetingControls extends StatelessWidget {
           Expanded(
             child: _ControlButton(
               icon: Icons.call_end_rounded,
-              label: 'End meeting',
+              label: endLabel,
               onPressed: onEndMeeting,
               backgroundColor: const Color(0xFFE5484D),
             ),
@@ -698,7 +792,11 @@ class _ControlButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final baseColor = backgroundColor ?? (isActive ? const Color(0xFF8B5CF6) : Colors.white.withValues(alpha: 0.1));
+    final baseColor =
+        backgroundColor ??
+        (isActive
+            ? const Color(0xFF8B5CF6)
+            : Colors.white.withValues(alpha: 0.1));
 
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 220),
@@ -740,10 +838,7 @@ class _ControlButton extends StatelessWidget {
 }
 
 class _GlassIconButton extends StatelessWidget {
-  const _GlassIconButton({
-    required this.icon,
-    required this.onPressed,
-  });
+  const _GlassIconButton({required this.icon, required this.onPressed});
 
   final IconData icon;
   final VoidCallback onPressed;

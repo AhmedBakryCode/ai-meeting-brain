@@ -10,11 +10,13 @@ import '../../../meetings/data/datasources/meetings_remote_data_source.dart';
 class NotificationDetailsPage extends StatelessWidget {
   const NotificationDetailsPage({
     required this.notificationId,
+    this.meetingId,
     this.isMeeting = false,
     super.key,
   });
 
   final String notificationId;
+  final String? meetingId;
   final bool isMeeting;
 
   @override
@@ -58,22 +60,26 @@ class NotificationDetailsPage extends StatelessWidget {
                           shape: BoxShape.circle,
                         ),
                         child: Icon(
-                          isMeeting ? Icons.video_call : Icons.notifications_active,
+                          isMeeting
+                              ? Icons.video_call
+                              : Icons.notifications_active,
                           color: theme.colorScheme.secondary,
                         ),
                       ),
                       const SizedBox(width: 16),
                       Text(
                         isMeeting ? 'Meeting Reminder' : 'Update',
-                        style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 24),
                   Text(
-                    isMeeting 
-                      ? 'The weekly coordination meeting is starting in 5 minutes. Please join to stay updated with the team.'
-                      : 'You have a new update regarding your recent task summary.',
+                    isMeeting
+                        ? 'The weekly coordination meeting is starting in 5 minutes. Please join to stay updated with the team.'
+                        : 'You have a new update regarding your recent task summary.',
                     style: theme.textTheme.bodyLarge?.copyWith(height: 1.6),
                   ),
                 ],
@@ -87,12 +93,26 @@ class NotificationDetailsPage extends StatelessWidget {
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
                     final router = GoRouter.of(context);
+                    final resolvedMeetingId = meetingId;
+                    if (resolvedMeetingId == null ||
+                        resolvedMeetingId.isEmpty) {
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'Meeting id is missing in this notification.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
                     try {
-                      final response =
-                          await sl<MeetingsRemoteDataSource>().startMeeting(notificationId);
+                      final response = await sl<MeetingsRemoteDataSource>()
+                          .joinMeeting(resolvedMeetingId);
                       final canUpload = _isCurrentUserCreator(response);
                       if (!context.mounted) return;
-                      router.push('/meetings/live/$notificationId?canUpload=$canUpload');
+                      router.push(
+                        '/meetings/live/$resolvedMeetingId?canUpload=$canUpload&joined=true',
+                      );
                     } catch (e) {
                       if (!context.mounted) return;
                       messenger.showSnackBar(
@@ -115,7 +135,9 @@ class NotificationDetailsPage extends StatelessWidget {
                 onPressed: () => context.pop(),
                 style: OutlinedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 18),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                 ),
                 child: const Text('Dismiss'),
               ),
@@ -131,31 +153,15 @@ class NotificationDetailsPage extends StatelessWidget {
     if (meeting is! Map<String, dynamic>) return false;
 
     final creatorId = meeting['creatorId']?.toString();
-    final token = sl<AuthLocalDataSource>().getAccessToken();
-    final currentUserId = _extractUserIdFromToken(token);
+    final creatorName = meeting['creatorName']?.toString();
+    final authDataSource = sl<AuthLocalDataSource>();
+    final currentIdentifiers = authDataSource.extractUserIdentifiersFromToken(
+      authDataSource.getAccessToken(),
+    );
 
-    if (creatorId == null || creatorId.isEmpty || currentUserId == null || currentUserId.isEmpty) {
-      return false;
-    }
+    if (currentIdentifiers.isEmpty) return false;
 
-    return creatorId == currentUserId;
-  }
-
-  String? _extractUserIdFromToken(String? token) {
-    if (token == null || token.isEmpty) return null;
-    final parts = token.split('.');
-    if (parts.length < 2) return null;
-
-    try {
-      final normalized = base64Url.normalize(parts[1]);
-      final payload = jsonDecode(utf8.decode(base64Url.decode(normalized)));
-      if (payload is! Map<String, dynamic>) return null;
-
-      return payload['sub']?.toString() ??
-          payload['nameid']?.toString() ??
-          payload['http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier']?.toString();
-    } catch (_) {
-      return null;
-    }
+    return currentIdentifiers.contains(creatorId?.trim().toLowerCase()) ||
+        currentIdentifiers.contains(creatorName?.trim().toLowerCase());
   }
 }

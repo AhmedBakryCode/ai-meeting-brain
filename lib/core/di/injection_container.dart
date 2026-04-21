@@ -12,47 +12,80 @@ import '../../features/meetings/data/repositories/meetings_repository_impl.dart'
 import '../../features/meetings/data/services/audio_recording_service.dart';
 import '../../features/meetings/data/services/meeting_pdf_export_service.dart';
 import '../../features/meetings/data/services/transcript_stream_service.dart';
+import '../../features/meetings/data/services/webrtc_service.dart';
+import '../../features/meetings/data/datasources/meetings_webrtc_data_source.dart';
 import '../../features/meetings/domain/repositories/meetings_repository.dart';
 import '../../features/meetings/presentation/bloc/meeting_bloc.dart';
 import '../../features/notifications/data/datasources/notifications_remote_data_source.dart';
 import '../../features/tasks/data/datasources/tasks_remote_data_source.dart';
 import '../notifications/notification_service.dart';
+import '../notifications/notification_hub_service.dart';
 import '../network/base_api_service.dart';
 import '../network/signalr_service.dart';
 import '../presentation/cubit/app_settings_cubit.dart';
 import '../sync/sync_manager.dart';
+import '../../features/tasks/domain/repositories/tasks_repository.dart';
+import '../../features/tasks/data/repositories/tasks_repository_impl.dart';
+import '../../features/tasks/presentation/cubit/tasks_cubit.dart';
+
+// Named instances for DI disambiguation
+const String _meetingsSignalR = 'meetingsSignalR';
+const String _notificationsSignalR = 'notificationsSignalR';
 
 final GetIt sl = GetIt.instance;
 
 Future<void> configureDependencies() async {
   sl
-    ..registerLazySingleton<BaseApiService>(() => BaseApiService(authLocalDataSource: sl()))
-    ..registerLazySingleton<SignalRService>(SignalRService.new)
+    ..registerLazySingleton<BaseApiService>(
+      () => BaseApiService(authLocalDataSource: sl()),
+    )
+    // Two separate SignalR connections: one for meetings hub, one for notifications hub
+    ..registerLazySingleton<SignalRService>(
+      SignalRService.new,
+      instanceName: _meetingsSignalR,
+    )
+    ..registerLazySingleton<SignalRService>(
+      SignalRService.new,
+      instanceName: _notificationsSignalR,
+    )
     ..registerLazySingleton<AuthLocalDataSource>(AuthLocalDataSourceImpl.new)
     ..registerLazySingleton<AuthRemoteDataSource>(
       () => AuthRemoteDataSourceImpl(apiService: sl()),
     )
     ..registerLazySingleton<AuthRepository>(
-      () => AuthRepositoryImpl(
-        remoteDataSource: sl(),
-        localDataSource: sl(),
-      ),
+      () => AuthRepositoryImpl(remoteDataSource: sl(), localDataSource: sl()),
     )
     ..registerLazySingleton<MeetingsRemoteDataSource>(
       () => MeetingsRemoteDataSourceImpl(apiService: sl()),
     )
-    ..registerLazySingleton<MeetingsLocalDataSource>(MeetingsLocalDataSourceImpl.new)
+    ..registerLazySingleton<MeetingsLocalDataSource>(
+      MeetingsLocalDataSourceImpl.new,
+    )
+    ..registerLazySingleton<MeetingsWebRTCDataSource>(
+      MeetingsWebRTCDataSource.new,
+    )
     ..registerLazySingleton<MeetingsRepository>(
       () => MeetingsRepositoryImpl(
         remoteDataSource: sl(),
         localDataSource: sl(),
+        webrtcDataSource: sl(),
       ),
     )
-    ..registerLazySingleton<AudioRecordingService>(AudioRecordingServiceImpl.new)
-    ..registerLazySingleton<TranscriptStreamService>(
-      () => TranscriptStreamServiceImpl(signalRService: sl()),
+    ..registerLazySingleton<AudioRecordingService>(
+      AudioRecordingServiceImpl.new,
     )
-    ..registerLazySingleton<MeetingPdfExportService>(MeetingPdfExportService.new)
+    ..registerLazySingleton<TranscriptStreamService>(
+      () => TranscriptStreamServiceImpl(
+        signalRService: sl(instanceName: _meetingsSignalR),
+        authLocalDataSource: sl(),
+      ),
+    )
+    ..registerLazySingleton<WebRtcService>(
+      () => WebRtcService(signalRService: sl(instanceName: _meetingsSignalR)),
+    )
+    ..registerLazySingleton<MeetingPdfExportService>(
+      MeetingPdfExportService.new,
+    )
     ..registerLazySingleton<NotificationService>(NotificationService.new)
     ..registerLazySingleton<SyncManager>(SyncManager.new)
     ..registerLazySingleton<TasksRemoteDataSource>(
@@ -61,20 +94,34 @@ Future<void> configureDependencies() async {
     ..registerLazySingleton<NotificationsRemoteDataSource>(
       () => NotificationsRemoteDataSourceImpl(apiService: sl()),
     )
+    ..registerLazySingleton<NotificationHubService>(
+      () => NotificationHubService(
+        signalRService: sl(instanceName: _notificationsSignalR),
+        authLocalDataSource: sl(),
+        notificationService: sl(),
+      ),
+    )
     ..registerFactory<AppSettingsCubit>(AppSettingsCubit.new)
     ..registerFactory<AuthBloc>(
       () => AuthBloc(
         repository: sl(),
         localDataSource: sl(),
+        notificationHubService: sl(),
       ),
     )
-    ..registerFactory<ProfileBloc>(
-      () => ProfileBloc(authRepository: sl()),
-    )
+    ..registerFactory<ProfileBloc>(() => ProfileBloc(authRepository: sl()))
     ..registerFactory<MeetingBloc>(
       () => MeetingBloc(
         recordingService: sl(),
         transcriptStreamService: sl(),
+        webRtcService: sl(),
+        meetingsRepository: sl(),
+        authLocalDataSource: sl(),
       ),
-    );
+    )
+    ..registerLazySingleton<TasksRepository>(
+      () =>
+          TasksRepositoryImpl(remoteDataSource: sl(), meetingsRepository: sl()),
+    )
+    ..registerFactory<TasksCubit>(() => TasksCubit(repository: sl()));
 }

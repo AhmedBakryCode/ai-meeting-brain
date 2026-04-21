@@ -7,6 +7,8 @@ import '../../features/auth/presentation/pages/auth_page.dart';
 import '../../features/auth/presentation/pages/profile_page.dart';
 import '../../features/auth/presentation/pages/register_page.dart';
 import '../../features/meetings/presentation/pages/live_meeting_page.dart';
+import '../../features/meetings/data/datasources/meetings_remote_data_source.dart';
+// import '../../features/meetings/data/datasources/meetings_webrtc_data_source.dart';
 import '../../features/meetings/presentation/pages/meetings_page.dart';
 import '../../features/notifications/presentation/pages/notification_details_page.dart';
 import '../../features/notifications/presentation/pages/notifications_page.dart';
@@ -20,9 +22,11 @@ class AppRouter {
       final authDataSource = sl<AuthLocalDataSource>();
       final token = authDataSource.getAccessToken();
       final isAuthenticated = token != null && token.isNotEmpty;
-      
-      final isAuthRoute = state.matchedLocation == '/auth' || state.matchedLocation == '/register';
-      
+
+      final isAuthRoute =
+          state.matchedLocation == '/auth' ||
+          state.matchedLocation == '/register';
+
       if (!isAuthenticated && !isAuthRoute) {
         return '/auth';
       }
@@ -35,25 +39,23 @@ class AppRouter {
       GoRoute(
         path: '/auth',
         name: 'auth',
-        pageBuilder: (context, state) => _buildTransitionPage(
-          state: state,
-          child: const AuthPage(),
-        ),
+        pageBuilder: (context, state) =>
+            _buildTransitionPage(state: state, child: const AuthPage()),
       ),
       GoRoute(
         path: '/register',
         name: 'register',
-        pageBuilder: (context, state) => _buildTransitionPage(
-          state: state,
-          child: const RegisterPage(),
-        ),
+        pageBuilder: (context, state) =>
+            _buildTransitionPage(state: state, child: const RegisterPage()),
       ),
       GoRoute(
         path: '/meetings',
         name: 'meetings',
         pageBuilder: (context, state) => _buildTransitionPage(
           state: state,
-          child: const MeetingsPage(),
+          child: MeetingsPage(
+            remoteDataSource: sl<MeetingsRemoteDataSource>(),
+          ),
         ),
       ),
       GoRoute(
@@ -63,17 +65,17 @@ class AppRouter {
           state: state,
           child: LiveMeetingPage(
             meetingId: state.pathParameters['id'] ?? '',
-            canUploadRecording: state.uri.queryParameters['canUpload'] != 'false',
+            canUploadRecording:
+                state.uri.queryParameters['canUpload'] != 'false',
+            isJoinedParticipant: state.uri.queryParameters['joined'] == 'true',
           ),
         ),
       ),
       GoRoute(
         path: '/tasks',
         name: 'tasks',
-        pageBuilder: (context, state) => _buildTransitionPage(
-          state: state,
-          child: const TasksPage(),
-        ),
+        pageBuilder: (context, state) =>
+            _buildTransitionPage(state: state, child: const TasksPage()),
         routes: [
           GoRoute(
             path: 'details/:id',
@@ -100,6 +102,7 @@ class AppRouter {
               state: state,
               child: NotificationDetailsPage(
                 notificationId: state.pathParameters['id'] ?? '',
+                meetingId: state.uri.queryParameters['meetingId'],
                 isMeeting: state.uri.queryParameters['isMeeting'] == 'true',
               ),
             ),
@@ -109,10 +112,8 @@ class AppRouter {
       GoRoute(
         path: '/profile',
         name: 'profile',
-        pageBuilder: (context, state) => _buildTransitionPage(
-          state: state,
-          child: const ProfilePage(),
-        ),
+        pageBuilder: (context, state) =>
+            _buildTransitionPage(state: state, child: const ProfilePage()),
       ),
     ],
   );
@@ -126,10 +127,13 @@ class AppRouter {
       child: child,
       transitionDuration: const Duration(milliseconds: 260),
       transitionsBuilder: (context, animation, secondaryAnimation, child) {
-        final offsetAnimation = Tween<Offset>(
-          begin: const Offset(0.05, 0),
-          end: Offset.zero,
-        ).animate(CurvedAnimation(parent: animation, curve: Curves.easeOutCubic));
+        final offsetAnimation =
+            Tween<Offset>(
+              begin: const Offset(0.05, 0),
+              end: Offset.zero,
+            ).animate(
+              CurvedAnimation(parent: animation, curve: Curves.easeOutCubic),
+            );
         return FadeTransition(
           opacity: animation,
           child: SlideTransition(position: offsetAnimation, child: child),

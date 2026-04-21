@@ -1,3 +1,4 @@
+
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:meeting_brain/l10n/app_localizations.dart';
@@ -7,13 +8,18 @@ import 'core/presentation/cubit/app_settings_cubit.dart';
 import 'core/routing/app_router.dart';
 import 'core/theme/app_theme.dart';
 
+import 'features/auth/presentation/bloc/auth_bloc.dart';
+
 class MeetingBrainApp extends StatelessWidget {
   const MeetingBrainApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (_) => sl<AppSettingsCubit>(),
+    return MultiBlocProvider(
+      providers: [
+        BlocProvider(create: (_) => sl<AppSettingsCubit>()),
+        BlocProvider(create: (_) => sl<AuthBloc>()..add(AuthCheckRequested())),
+      ],
       child: BlocBuilder<AppSettingsCubit, AppSettingsState>(
         builder: (context, state) {
           return MaterialApp.router(

@@ -31,6 +31,9 @@
 
   <title>meeting_brain</title>
   <link rel="manifest" href="manifest.json">
+  
+  <!-- WebRTC Adapter for cross-browser compatibility -->
+  <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
 </head>
 <body>
   <!--
@@ -41,6 +44,23 @@
     For more details:
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
+  <script>
+    // Fix for Web Audio Autoplay Policy on Web
+    // AudioContext needs to be resumed after user interaction
+    window.audioContextInitialized = false;
+    
+    function resumeAudioContext() {
+      if (window.audioContext && window.audioContext.state === 'suspended') {
+        window.audioContext.resume();
+      }
+      window.audioContextInitialized = true;
+    }
+    
+    // Resume on first user interaction
+    ['click', 'touchstart', 'keydown'].forEach(event => {
+      document.addEventListener(event, resumeAudioContext, { once: true });
+    });
+  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

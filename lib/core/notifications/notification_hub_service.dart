@@ -23,31 +23,48 @@ class NotificationHubService {
     final token = _authLocalDataSource.getAccessToken();
     if (token == null || token.isEmpty) return;
 
-    final url = '${ApiConstants.notificationHubUrl}?access_token=$token';
+    // Use a clean URL without encoded token for better reconnection support
+    final url = ApiConstants.notificationHubUrl;
 
     try {
-      await _signalRService.connect(url, accessToken: token);
+      await _signalRService.connect(
+        url, 
+        accessTokenFactory: () async => _authLocalDataSource.getAccessToken() ?? '',
+      );
 
       _signalRService.on('ReceiveNotification', (args) {
-        if (args != null && args.isNotEmpty && args[0] is Map<String, dynamic>) {
-          final data = args[0] as Map<String, dynamic>;
-          final title = data['title'] as String? ?? 'Notification';
-          final message = data['message'] as String? ?? '';
+        print('🔔 RAW NOTIFICATION ARGS: $args');
+        if (args != null && args.isNotEmpty) {
+          Map<String, dynamic>? data;
           
-          // Show foreground notification
-          _notificationService.showForegroundNotification(
-            RemoteMessage(
-              notification: RemoteNotification(
-                title: title,
-                body: message,
+          if (args[0] is Map<String, dynamic>) {
+            data = args[0] as Map<String, dynamic>;
+          } else if (args[0] is String) {
+            try {
+              data = jsonDecode(args[0] as String) as Map<String, dynamic>;
+            } catch (_) {}
+          }
+
+          if (data != null) {
+            final title = data['title'] as String? ?? 'Notification';
+            final message = data['message'] as String? ?? '';
+            
+            // Show foreground notification
+            _notificationService.showForegroundNotification(
+              RemoteMessage(
+                notification: RemoteNotification(
+                  title: title,
+                  body: message,
+                ),
+                data: data.map((key, value) => MapEntry(key, value?.toString() ?? '')),
               ),
-              data: data,
-            ),
-          );
+            );
+          }
         }
       });
     } catch (e) {
       // Handle connection error
+      print('❌ NotificationHubService connection error: $e');
     }
   }
 

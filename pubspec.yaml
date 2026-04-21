@@ -59,6 +59,9 @@ dependencies:
   path_provider: ^2.1.5
   image_picker: ^1.2.1
 
+  flutter_webrtc: ^1.1.0
+  audio_session: ^0.2.3
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

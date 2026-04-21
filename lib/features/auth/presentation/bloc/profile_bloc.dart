@@ -23,6 +23,9 @@ class ChangePasswordEvent extends ProfileEvent {
   final String currentPassword;
   final String newPassword;
 }
+class LogoutEvent extends ProfileEvent {
+  const LogoutEvent();
+}
 
 // STATES
 abstract class ProfileState {
@@ -45,6 +48,9 @@ class ProfileError extends ProfileState {
 class ProfilePasswordChanged extends ProfileState {
   const ProfilePasswordChanged();
 }
+class ProfileLoggedOut extends ProfileState {
+  const ProfileLoggedOut();
+}
 
 // BLOC
 class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
@@ -55,6 +61,7 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
     on<UpdateProfileEvent>(_onUpdateProfile);
     on<UploadAvatarEvent>(_onUploadAvatar);
     on<ChangePasswordEvent>(_onChangePassword);
+    on<LogoutEvent>(_onLogout);
   }
 
   final AuthRepository _authRepository;
@@ -98,6 +105,16 @@ class ProfileBloc extends Bloc<ProfileEvent, ProfileState> {
       await _authRepository.changePassword(event.currentPassword, event.newPassword);
       emit(const ProfilePasswordChanged());
       if (_currentUser != null) emit(ProfileLoaded(_currentUser!));
+    } catch (e) {
+      emit(ProfileError(e.toString()));
+      if (_currentUser != null) emit(ProfileLoaded(_currentUser!));
+    }
+  }
+  Future<void> _onLogout(LogoutEvent event, Emitter<ProfileState> emit) async {
+    emit(const ProfileLoading());
+    try {
+      await _authRepository.logout();
+      emit(const ProfileLoggedOut());
     } catch (e) {
       emit(ProfileError(e.toString()));
       if (_currentUser != null) emit(ProfileLoaded(_currentUser!));

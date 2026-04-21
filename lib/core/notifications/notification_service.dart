@@ -18,6 +18,10 @@ class NotificationService {
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
     const settings = InitializationSettings(android: androidSettings, iOS: DarwinInitializationSettings());
     await _localNotifications.initialize(settings);
+
+    final androidImplementation = _localNotifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidImplementation?.requestNotificationsPermission();
   }
 
   Future<String?> getFcmToken() => _messaging.getToken();

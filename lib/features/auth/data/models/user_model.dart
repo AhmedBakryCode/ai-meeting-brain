@@ -6,6 +6,7 @@ class UserModel extends UserEntity {
     required super.email,
     required super.displayName,
     super.avatarUrl,
+    super.isJoined = false,
     this.createdAt,
   });
 
@@ -17,6 +18,7 @@ class UserModel extends UserEntity {
       email: json['email'] as String,
       displayName: json['name'] ?? '',
       avatarUrl: json['avatarUrl'] as String?,
+      isJoined: json['isJoined'] as bool? ?? false,
       createdAt: json['createdAt'] != null ? DateTime.tryParse(json['createdAt']) : null,
     );
   }
@@ -27,7 +29,26 @@ class UserModel extends UserEntity {
       'email': email,
       'name': displayName,
       'avatarUrl': avatarUrl,
+      'isJoined': isJoined,
       if (createdAt != null) 'createdAt': createdAt!.toIso8601String(),
     };
+  }
+
+  UserModel copyWith({
+    String? id,
+    String? email,
+    String? displayName,
+    String? avatarUrl,
+    bool? isJoined,
+    DateTime? createdAt,
+  }) {
+    return UserModel(
+      id: id ?? this.id,
+      email: email ?? this.email,
+      displayName: displayName ?? this.displayName,
+      avatarUrl: avatarUrl ?? this.avatarUrl,
+      isJoined: isJoined ?? this.isJoined,
+      createdAt: createdAt ?? this.createdAt,
+    );
   }
 }

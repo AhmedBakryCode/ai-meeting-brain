@@ -5,18 +5,26 @@ import '../../../../core/network/base_api_service.dart';
 
 abstract class MeetingsRemoteDataSource {
   Future<List<dynamic>> fetchMeetings({int page = 1, int limit = 20});
-  Future<Map<String, dynamic>> uploadRecording(String meetingId, String filePath);
+  Future<Map<String, dynamic>> uploadRecording(
+    String meetingId,
+    String filePath,
+  );
   Future<Map<String, dynamic>> startMeeting(String meetingId);
+  Future<Map<String, dynamic>> joinMeeting(String meetingId);
+  Future<Map<String, dynamic>> leaveMeeting(String meetingId);
   Future<Map<String, dynamic>> endMeeting(String meetingId);
   Future<Map<String, dynamic>> createMeeting({
     required String title,
     required DateTime date,
     List<String> participantIds = const [],
   });
+  Future<Map<String, dynamic>> deleteMeeting(String meetingId);
+  Future<List<Map<String, dynamic>>> getIceServers();
 }
 
 class MeetingsRemoteDataSourceImpl implements MeetingsRemoteDataSource {
-  MeetingsRemoteDataSourceImpl({required BaseApiService apiService}) : _apiService = apiService;
+  MeetingsRemoteDataSourceImpl({required BaseApiService apiService})
+    : _apiService = apiService;
 
   final BaseApiService _apiService;
 
@@ -30,7 +38,10 @@ class MeetingsRemoteDataSourceImpl implements MeetingsRemoteDataSource {
   }
 
   @override
-  Future<Map<String, dynamic>> uploadRecording(String meetingId, String filePath) async {
+  Future<Map<String, dynamic>> uploadRecording(
+    String meetingId,
+    String filePath,
+  ) async {
     final formData = FormData.fromMap({
       'file': await MultipartFile.fromFile(filePath),
     });
@@ -44,13 +55,33 @@ class MeetingsRemoteDataSourceImpl implements MeetingsRemoteDataSource {
 
   @override
   Future<Map<String, dynamic>> startMeeting(String meetingId) async {
-    final response = await _apiService.post(ApiConstants.startMeetingUrl(meetingId));
+    final response = await _apiService.post(
+      ApiConstants.startMeetingUrl(meetingId),
+    );
+    return (response.data as Map<String, dynamic>?) ?? <String, dynamic>{};
+  }
+
+  @override
+  Future<Map<String, dynamic>> joinMeeting(String meetingId) async {
+    final response = await _apiService.post(
+      ApiConstants.joinMeetingUrl(meetingId),
+    );
+    return (response.data as Map<String, dynamic>?) ?? <String, dynamic>{};
+  }
+
+  @override
+  Future<Map<String, dynamic>> leaveMeeting(String meetingId) async {
+    final response = await _apiService.post(
+      ApiConstants.leaveMeetingUrl(meetingId),
+    );
     return (response.data as Map<String, dynamic>?) ?? <String, dynamic>{};
   }
 
   @override
   Future<Map<String, dynamic>> endMeeting(String meetingId) async {
-    final response = await _apiService.post(ApiConstants.endMeetingUrl(meetingId));
+    final response = await _apiService.post(
+      ApiConstants.endMeetingUrl(meetingId),
+    );
     return (response.data as Map<String, dynamic>?) ?? <String, dynamic>{};
   }
 
@@ -69,5 +100,37 @@ class MeetingsRemoteDataSourceImpl implements MeetingsRemoteDataSource {
       },
     );
     return response.data as Map<String, dynamic>;
+  }
+
+  @override
+  Future<Map<String, dynamic>> deleteMeeting(String meetingId) async {
+    final response = await _apiService.delete(
+      '${ApiConstants.meetingsUrl}/$meetingId',
+    );
+    return (response.data as Map<String, dynamic>?) ?? <String, dynamic>{};
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> getIceServers() async {
+    try {
+      final response = await _apiService.get(ApiConstants.iceServersUrl);
+      final data = response.data;
+      if (data is Map && data['iceServers'] is List) {
+        return (data['iceServers'] as List)
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    } catch (_) {}
+    // ⚠️ LOCAL NETWORK TESTING: STUN only (TURN disabled)
+    // Forcing P2P only - devices must be on same network
+    return [
+      {
+        'urls': ['stun:stun.l.google.com:19302']
+      },
+      {
+        'urls': ['stun:stun1.l.google.com:19302']
+      },
+    ];
   }
 }
